@@ -3,11 +3,12 @@
 #include <stdlib.h>
 #include <limits.h>
 
-#define BLOCK_SIZE 32
+#define BLOCK_SIZE 512 
 #define blocks_needed(N) ((N / (2 * BLOCK_SIZE)) + (N % (2 * BLOCK_SIZE) == 0 ? 0 : 1))
 
-__global__ void d_sum_reduce(const int* d_nums, int* d_res, int N) {
-    __shared__ int sdata[BLOCK_SIZE];
+template <typename T>
+__global__ void d_sum_reduce(const T* d_nums, T* d_res, int N) {
+    __shared__ T sdata[2 * BLOCK_SIZE];
 
     unsigned int tid = threadIdx.x;
     unsigned int i = blockIdx.x * 2 * BLOCK_SIZE + tid;
@@ -24,45 +25,36 @@ __global__ void d_sum_reduce(const int* d_nums, int* d_res, int N) {
     if (BLOCK_SIZE >= 512) {if(tid < 256) sdata[tid] += sdata[tid+256];__syncthreads();}
     if (BLOCK_SIZE >= 256) {if(tid < 128) sdata[tid] += sdata[tid+128];__syncthreads();}
     if (BLOCK_SIZE >= 128) {if(tid <  64) sdata[tid] += sdata[tid+ 64];__syncthreads();}
-
-    if (tid < 32) {
-        if (BLOCK_SIZE >= 64) sdata[tid] += sdata[tid + 32];
-        if (BLOCK_SIZE >= 32) sdata[tid] += sdata[tid + 16];
-        if (BLOCK_SIZE >= 16) sdata[tid] += sdata[tid +  8];
-        if (BLOCK_SIZE >=  8) sdata[tid] += sdata[tid +  4];
-        if (BLOCK_SIZE >=  4) sdata[tid] += sdata[tid +  2];
-        if (BLOCK_SIZE >=  2) sdata[tid] += sdata[tid +  1];
-    }
+    // below in one warp
+    if (BLOCK_SIZE >= 64) {sdata[tid] += sdata[tid + 32];__syncthreads();}
+    if (BLOCK_SIZE >= 32) {sdata[tid] += sdata[tid + 16];__syncthreads();}
+    if (BLOCK_SIZE >= 16) {sdata[tid] += sdata[tid +  8];__syncthreads();}
+    if (BLOCK_SIZE >=  8) {sdata[tid] += sdata[tid +  4];__syncthreads();}
+    if (BLOCK_SIZE >=  4) {sdata[tid] += sdata[tid +  2];__syncthreads();}
+    if (BLOCK_SIZE >=  2) {sdata[tid] += sdata[tid +  1];__syncthreads();}
 
     if (tid == 0)
         d_res[blockIdx.x] = sdata[0];
-    d_res[tid] = 42;
 }
 
-int sum_reduce(const int* nums, int N) {
-    int num_blocks = blocks_needed(N);
-    int* d_nums;
-    int* d_res;
+template <typename T>
+T sum_reduce(const T* nums, int N) {
+    unsigned int num_blocks = blocks_needed(N);
+    T* d_nums;
+    T* d_res;
     
-    printf("so... %d %d\n", num_blocks, sizeof(int));
-    printf("Memsize: %d\n", num_blocks * sizeof(int) * 2 * BLOCK_SIZE);
-    //cudaMalloc(&d_nums, num_blocks * sizeof(int) * 2 * BLOCK_SIZE);
-    cudaMalloc(&d_nums, sizeof(int));
-    printf("uh...\n");
+    cudaMalloc(&d_nums, num_blocks * sizeof(T) * 2 * BLOCK_SIZE);
     cudaMalloc(&d_res, num_blocks * sizeof(int));
-    printf("it's...\n");
-    cudaMemcpy(d_nums, nums, sizeof(int) * N, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_nums, nums, sizeof(T) * N, cudaMemcpyHostToDevice);
 
-    d_sum_reduce<<<num_blocks, BLOCK_SIZE>>>(d_nums, d_res, N);
+    d_sum_reduce<T><<<num_blocks, BLOCK_SIZE>>>(d_nums, d_res, N);
 
-    printf("come...\n");
-    int res; 
-    cudaMemcpy(&res, d_res, sizeof(int), cudaMemcpyDeviceToHost);
-    printf("to...\n");
+    T res; 
+    cudaMemcpy(&res, d_res, sizeof(T), cudaMemcpyDeviceToHost);
+    
     cudaFree(d_nums);
     cudaFree(d_res);
 
-    printf("this...\n");
     return res;
 }
 
@@ -74,9 +66,9 @@ int rand_range(int min, int max) {
 int* gen_ints(int N) {
     int* nums = (int*) malloc(sizeof(int) * N);
     srand(time(NULL));
-    for (int i = 0; i < 2 * N; i+=2) {
+    for (int i = 0; i < N; i++) {
         nums[i] = rand_range(0, 1000);
-        nums[i + 1] = rand_range(0, 1000);
+        //nums[i + 1] = rand_range(0, 1000);
     }
 
     return nums;
@@ -111,7 +103,7 @@ int main(int argc, char* argv[]) {
         sum += nums[i];
     printf("Serial Sum: %llu\n", sum);
 
-    int par_sum = sum_reduce(nums, N);
+    int par_sum = sum_reduce<int>(nums, N);
     printf("Parallel Sum: %d\n", par_sum);
 
     free(nums);
