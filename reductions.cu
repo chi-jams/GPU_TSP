@@ -3,7 +3,7 @@
 #include <stdlib.h>
 #include <limits.h>
 
-#define BLOCK_SIZE 512 
+#define BLOCK_SIZE 32 
 #define blocks_needed(N) ((N / (2 * BLOCK_SIZE)) + (N % (2 * BLOCK_SIZE) == 0 ? 0 : 1))
 
 template <typename T>
@@ -16,6 +16,7 @@ __global__ void d_sum_reduce(const T* d_nums, T* d_res, int N) {
 
     sdata[tid] = 0;
 
+    // This layers all would-be blocks into a single block
     while (i < N) {
         sdata[tid] += d_nums[i] + d_nums[i + BLOCK_SIZE];
         i += gridSize;
@@ -26,12 +27,14 @@ __global__ void d_sum_reduce(const T* d_nums, T* d_res, int N) {
     if (BLOCK_SIZE >= 256) {if(tid < 128) sdata[tid] += sdata[tid+128];__syncthreads();}
     if (BLOCK_SIZE >= 128) {if(tid <  64) sdata[tid] += sdata[tid+ 64];__syncthreads();}
     // below in one warp
-    if (BLOCK_SIZE >= 64) {sdata[tid] += sdata[tid + 32];__syncthreads();}
-    if (BLOCK_SIZE >= 32) {sdata[tid] += sdata[tid + 16];__syncthreads();}
-    if (BLOCK_SIZE >= 16) {sdata[tid] += sdata[tid +  8];__syncthreads();}
-    if (BLOCK_SIZE >=  8) {sdata[tid] += sdata[tid +  4];__syncthreads();}
-    if (BLOCK_SIZE >=  4) {sdata[tid] += sdata[tid +  2];__syncthreads();}
-    if (BLOCK_SIZE >=  2) {sdata[tid] += sdata[tid +  1];__syncthreads();}
+    if (tid < 32) {
+        if (BLOCK_SIZE >= 64) {sdata[tid] += sdata[tid + 32];__syncwarp();}
+        if (BLOCK_SIZE >= 32) {sdata[tid] += sdata[tid + 16];__syncwarp();}
+        if (BLOCK_SIZE >= 16) {sdata[tid] += sdata[tid +  8];__syncwarp();}
+        if (BLOCK_SIZE >=  8) {sdata[tid] += sdata[tid +  4];__syncwarp();}
+        if (BLOCK_SIZE >=  4) {sdata[tid] += sdata[tid +  2];__syncwarp();}
+        if (BLOCK_SIZE >=  2) {sdata[tid] += sdata[tid +  1];__syncwarp();}
+    }
 
     if (tid == 0)
         d_res[blockIdx.x] = sdata[0];
@@ -47,7 +50,9 @@ T sum_reduce(const T* nums, int N) {
     cudaMalloc(&d_res, num_blocks * sizeof(int));
     cudaMemcpy(d_nums, nums, sizeof(T) * N, cudaMemcpyHostToDevice);
 
-    d_sum_reduce<T><<<num_blocks, BLOCK_SIZE>>>(d_nums, d_res, N);
+    // recursive version
+    //d_sum_reduce<T><<<num_blocks, BLOCK_SIZE>>>(d_nums, d_res, N);
+    d_sum_reduce<T><<<1, BLOCK_SIZE>>>(d_nums, d_res, N);
 
     T res; 
     cudaMemcpy(&res, d_res, sizeof(T), cudaMemcpyDeviceToHost);
