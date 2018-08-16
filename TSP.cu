@@ -6,6 +6,8 @@
 
 #include <algorithm>
 
+#include "reductions.h"
+
 #define BLOCK_SIZE 32
 
 int rand_range(int min, int max);
@@ -62,43 +64,6 @@ __global__ void calc_paths(const int* pts, double* dists, int N, int Nf) {
 
         free(perm);
     }
-}
-
-__global__ void d_max_reduce(const double* dists, double* o_dists, int N) {
-    __shared__ double sdata[1];
-
-    unsigned int tid = threadIdx.x;
-    unsigned int i = blockIdx.x * 2 * BLOCK_SIZE + tid;
-    unsigned int gridSize = BLOCK_SIZE * 2 * gridDim.x;
-
-    sdata[tid] = 0;
-
-    /*
-    while (i < N) {
-        sdata[tid] += dists[i] + dists[i + BLOCK_SIZE];
-        i += gridSize;
-    }
-    __syncthreads();
-    */
-
-    /*
-    if (BLOCK_SIZE >= 512) {if(tid < 256) sdata[tid] += sdata[tid+256];__syncthreads();}
-    if (BLOCK_SIZE >= 256) {if(tid < 128) sdata[tid] += sdata[tid+128];__syncthreads();}
-    if (BLOCK_SIZE >= 128) {if(tid <  64) sdata[tid] += sdata[tid+ 64];__syncthreads();}
-    */
-    if (tid < 2) {
-        /*
-        if (BLOCK_SIZE >= 64) sdata[tid] += sdata[tid + 32];
-        if (BLOCK_SIZE >= 32) sdata[tid] += sdata[tid + 16];
-        if (BLOCK_SIZE >= 16) sdata[tid] += sdata[tid +  8];
-        if (BLOCK_SIZE >=  8) sdata[tid] += sdata[tid +  4];
-        if (BLOCK_SIZE >=  4) sdata[tid] += sdata[tid +  2];
-        */
-        if (BLOCK_SIZE >=  2) sdata[tid] += sdata[tid +  1];
-    }
-
-    if (tid == 0)
-        o_dists[blockIdx.x] = sdata[0];
 }
 
 int main(int argc, char* argv[]) {
@@ -226,18 +191,6 @@ void serial_tsp(const int* pts, double& min_dist, int& min_perm, int N, int Nf) 
     }
 }
 
-double max_reduce(const double* d_pts, int N) {
-    double res;
-    double* d_res;
-    cudaMalloc(&d_res, sizeof(double));
-    d_max_reduce<<<1, BLOCK_SIZE>>>(d_pts, d_res, N);
-
-    cudaMemcpy(&res, d_res, sizeof(double), cudaMemcpyDeviceToHost);
-    cudaFree(d_res);
-
-    return res;
-}
-
 void parallel_tsp(const int* pts, double& min_dist, int& min_perm, int N, int Nf) {
     int* d_pts;
     double* d_dists;
@@ -252,7 +205,7 @@ void parallel_tsp(const int* pts, double& min_dist, int& min_perm, int N, int Nf
     calc_paths<<<Nf, 1>>>(d_pts, d_dists, N, Nf);
 
     printf("Made paths...\n");
-    min_dist = max_reduce(d_dists, N);
+    //min_dist = max_reduce(d_dists, N);
     min_perm = 0; // Haven't gotten the actual permutation yet
     printf("Did reduction...\n");
 
