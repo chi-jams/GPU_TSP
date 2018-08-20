@@ -7,10 +7,16 @@
 #define blocks_needed(N) ((N / (2 * BLOCK_SIZE)) + (N % (2 * BLOCK_SIZE) == 0 ? 0 : 1))
 
 template <typename T>
-__global__ void _d_gen_index_arr(const T* d_nums, int N);
+__global__ void _d_gen_index_arr(T* d_nums, int N);
 
 template <typename T>
-T* d_gen_index_arr(const T* d_nums, int N);
+T* d_gen_index_arr(int N);
+
+template <typename T>
+__global__ void d_min_reduce(T* d_nums, int* d_index, int N);
+
+template <typename T>
+void min_reduce(T* d_nums, int N);
 
 template <typename T>
 __global__ void d_sum_reduce(const T* d_nums, T* d_res, int N);
@@ -45,11 +51,14 @@ int main(int argc, char* argv[]) {
 
     unsigned long long* nums = gen_ints<unsigned long long>(N);
 
-    /*
+    unsigned long long* d_ind = d_gen_index_arr<unsigned long long>(N);
+    unsigned long long* ind = (unsigned long long*) malloc(sizeof(unsigned long long) * N);
+    
+    cudaMemcpy(ind, d_ind, sizeof(unsigned long long) * N, cudaMemcpyDeviceToHost);
     for (int i = 0; i < N; i++)
-        printf("%d: %d\n", i, nums[i]);
-    */
+        printf("%d: %d\n", i, ind[i]);
 
+    /*
     unsigned long long sum = 0;
     for (int i = 0; i < N; i++)
         sum += nums[i];
@@ -57,13 +66,14 @@ int main(int argc, char* argv[]) {
 
     unsigned long long par_sum = sum_reduce<unsigned long long>(nums, N);
     printf("Parallel Sum: %llu\n", par_sum);
+    */
 
     free(nums);
     return 0;
 }
 
 template <typename T>
-__global__ void _d_gen_index_arr(const T* d_nums, int N) {
+__global__ void _d_gen_index_arr(T* d_nums, int N) {
     unsigned int tid = threadIdx.x;
     unsigned int i = blockIdx.x * BLOCK_SIZE + tid;
     unsigned int gridSize = BLOCK_SIZE * gridDim.x;
@@ -79,9 +89,56 @@ T* d_gen_index_arr(int N) {
     T* d_nums; 
     cudaMalloc(&d_nums, sizeof(T) * N);
 
-    _d_gen_index_arr(d_nums, N);    
+    _d_gen_index_arr<T><<<1, BLOCK_SIZE>>>(d_nums, N);    
 
     return d_nums;
+}
+
+// TODO: Finish converting this to min_reduce
+template <typename T>
+__global__ void d_min_reduce(T* d_nums, int* d_index, int N) {
+    __shared__ T sdata[2 * BLOCK_SIZE];
+    __shared__ T sind[2 * BLOCK_SIZE];
+
+    unsigned int tid = threadIdx.x;
+    unsigned int i = blockIdx.x * 2 * BLOCK_SIZE + tid;
+    unsigned int gridSize = BLOCK_SIZE * 2 * gridDim.x;
+
+    sdata[tid] = 0;
+
+    // This layers all would-be blocks into a single block
+    while (i < N) {
+        if (d_nums[i] < d_nums[i + BLOCK_SIZE] && d_nums < sdata[tid])
+        {
+            sdata[tid] = d_nums[i];
+        }
+        else if (d_nums < sdata[tid])
+        sdata[tid] += d_nums[i] + d_nums[i + BLOCK_SIZE];
+        i += gridSize;
+    }
+    __syncthreads();
+
+    if (BLOCK_SIZE >= 512) {if(tid < 256) sdata[tid] += sdata[tid+256];__syncthreads();}
+    if (BLOCK_SIZE >= 256) {if(tid < 128) sdata[tid] += sdata[tid+128];__syncthreads();}
+    if (BLOCK_SIZE >= 128) {if(tid <  64) sdata[tid] += sdata[tid+ 64];__syncthreads();}
+    // below in one warp
+    if (tid < 32) {
+        if (BLOCK_SIZE >= 64) {sdata[tid] += sdata[tid + 32];__syncwarp();}
+        if (BLOCK_SIZE >= 32) {sdata[tid] += sdata[tid + 16];__syncwarp();}
+        if (BLOCK_SIZE >= 16) {sdata[tid] += sdata[tid +  8];__syncwarp();}
+        if (BLOCK_SIZE >=  8) {sdata[tid] += sdata[tid +  4];__syncwarp();}
+        if (BLOCK_SIZE >=  4) {sdata[tid] += sdata[tid +  2];__syncwarp();}
+        if (BLOCK_SIZE >=  2) {sdata[tid] += sdata[tid +  1];__syncwarp();}
+    }
+
+    if (tid == 0)
+        d_res[blockIdx.x] = sdata[0];
+}
+
+// TODO: Finish converting this to min_reduce
+template <typename T>
+void min_reduce(T* d_nums, int N) {
+
 }
 
 template <typename T>
