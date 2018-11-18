@@ -58,7 +58,6 @@ int main(int argc, char* argv[]) {
     for (int i = 0; i < N; i++)
         printf("%d: %d\n", i, ind[i]);
 
-    /*
     unsigned long long sum = 0;
     for (int i = 0; i < N; i++)
         sum += nums[i];
@@ -66,7 +65,6 @@ int main(int argc, char* argv[]) {
 
     unsigned long long par_sum = sum_reduce<unsigned long long>(nums, N);
     printf("Parallel Sum: %llu\n", par_sum);
-    */
 
     free(nums);
     return 0;
@@ -94,9 +92,16 @@ T* d_gen_index_arr(int N) {
     return d_nums;
 }
 
-// TODO: Finish converting this to min_reduce
+#define min_reduce_it(BLK_SIZE, sync_mtd) if (BLOCK_SIZE >= BLK_SIZE) { \
+    if (sdata[tid+BLK_SIZE/2] < sdata[tid]) { \
+        sdata[tid] = sdata[tid+BLK_SIZE/2]; \
+        sind[tid] = sind[tid+BLK_SIZE/2]; \
+    } \
+    sync_mtd; \
+}
+
 template <typename T>
-__global__ void d_min_reduce(T* d_nums, int* d_index, int N) {
+__global__ void d_min_reduce(T* d_nums, int* d_index, int N, T* d_res, T* d_res_ind) {
     __shared__ T sdata[2 * BLOCK_SIZE];
     __shared__ T sind[2 * BLOCK_SIZE];
 
@@ -108,31 +113,34 @@ __global__ void d_min_reduce(T* d_nums, int* d_index, int N) {
 
     // This layers all would-be blocks into a single block
     while (i < N) {
-        if (d_nums[i] < d_nums[i + BLOCK_SIZE] && d_nums < sdata[tid])
-        {
+        if (d_nums[i] < d_nums[i + BLOCK_SIZE] && d_nums[i] < sdata[tid]) {
             sdata[tid] = d_nums[i];
+            sind[tid] = d_index[i];
         }
-        else if (d_nums < sdata[tid])
-        sdata[tid] += d_nums[i] + d_nums[i + BLOCK_SIZE];
+        else if (d_nums[i + BLOCK_SIZE] < sdata[tid]) {
+            sdata[tid] = d_nums[i + BLOCK_SIZE];
+            sind[tid] = d_index[i + BLOCK_SIZE];
+        }
         i += gridSize;
     }
     __syncthreads();
 
-    if (BLOCK_SIZE >= 512) {if(tid < 256) sdata[tid] += sdata[tid+256];__syncthreads();}
-    if (BLOCK_SIZE >= 256) {if(tid < 128) sdata[tid] += sdata[tid+128];__syncthreads();}
-    if (BLOCK_SIZE >= 128) {if(tid <  64) sdata[tid] += sdata[tid+ 64];__syncthreads();}
-    // below in one warp
+    min_reduce_it(512, __syncthreads());
+    min_reduce_it(256, __syncthreads());
+    min_reduce_it(128, __syncthreads());
     if (tid < 32) {
-        if (BLOCK_SIZE >= 64) {sdata[tid] += sdata[tid + 32];__syncwarp();}
-        if (BLOCK_SIZE >= 32) {sdata[tid] += sdata[tid + 16];__syncwarp();}
-        if (BLOCK_SIZE >= 16) {sdata[tid] += sdata[tid +  8];__syncwarp();}
-        if (BLOCK_SIZE >=  8) {sdata[tid] += sdata[tid +  4];__syncwarp();}
-        if (BLOCK_SIZE >=  4) {sdata[tid] += sdata[tid +  2];__syncwarp();}
-        if (BLOCK_SIZE >=  2) {sdata[tid] += sdata[tid +  1];__syncwarp();}
+        min_reduce_it(64, __syncwarp());
+        min_reduce_it(32, __syncwarp());
+        min_reduce_it(16, __syncwarp());
+        min_reduce_it(8, __syncwarp());
+        min_reduce_it(4, __syncwarp());
+        min_reduce_it(2, __syncwarp());
     }
 
-    if (tid == 0)
+    if (tid == 0) {
         d_res[blockIdx.x] = sdata[0];
+        d_res_ind[blockIdx.x] = sind[0];
+    }
 }
 
 // TODO: Finish converting this to min_reduce
@@ -141,6 +149,8 @@ void min_reduce(T* d_nums, int N) {
 
 }
 
+// Oh yeah, we're introducing macros now
+#define sum_reduce_it(BLK_SIZE, sync_mtd) if (BLOCK_SIZE >= BLK_SIZE) {if(tid < BLK_SIZE/2) sdata[tid] += sdata[tid+BLK_SIZE/2];sync_mtd;}
 template <typename T>
 __global__ void d_sum_reduce(const T* d_nums, T* d_res, int N) {
     __shared__ T sdata[2 * BLOCK_SIZE];
@@ -158,17 +168,16 @@ __global__ void d_sum_reduce(const T* d_nums, T* d_res, int N) {
     }
     __syncthreads();
 
-    if (BLOCK_SIZE >= 512) {if(tid < 256) sdata[tid] += sdata[tid+256];__syncthreads();}
-    if (BLOCK_SIZE >= 256) {if(tid < 128) sdata[tid] += sdata[tid+128];__syncthreads();}
-    if (BLOCK_SIZE >= 128) {if(tid <  64) sdata[tid] += sdata[tid+ 64];__syncthreads();}
-    // below in one warp
+    sum_reduce_it(512, __syncthreads());
+    sum_reduce_it(256, __syncthreads());
+    sum_reduce_it(128, __syncthreads());
     if (tid < 32) {
-        if (BLOCK_SIZE >= 64) {sdata[tid] += sdata[tid + 32];__syncwarp();}
-        if (BLOCK_SIZE >= 32) {sdata[tid] += sdata[tid + 16];__syncwarp();}
-        if (BLOCK_SIZE >= 16) {sdata[tid] += sdata[tid +  8];__syncwarp();}
-        if (BLOCK_SIZE >=  8) {sdata[tid] += sdata[tid +  4];__syncwarp();}
-        if (BLOCK_SIZE >=  4) {sdata[tid] += sdata[tid +  2];__syncwarp();}
-        if (BLOCK_SIZE >=  2) {sdata[tid] += sdata[tid +  1];__syncwarp();}
+        sum_reduce_it(64, __syncwarp());
+        sum_reduce_it(32, __syncwarp());
+        sum_reduce_it(16, __syncwarp());
+        sum_reduce_it(8, __syncwarp());
+        sum_reduce_it(4, __syncwarp());
+        sum_reduce_it(2, __syncwarp());
     }
 
     if (tid == 0)
