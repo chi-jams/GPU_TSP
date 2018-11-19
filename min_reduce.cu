@@ -30,14 +30,14 @@ T* d_gen_index_arr(int N) {
 }
 
 #define min_reduce_it(BLK_SIZE) if (BLOCK_SIZE >= BLK_SIZE) { \
-    if (tid < BLK_SIZE / 2 && sdata[tid+BLK_SIZE/2] > sdata[tid]) { \
+    if (tid < BLK_SIZE / 2 && sdata[tid+BLK_SIZE/2] < sdata[tid]) { \
         sdata[tid] = sdata[tid+BLK_SIZE/2]; \
     } \
     __syncthreads(); \
 }
 
 #define min_reduce_warp(BLK_SIZE) if (BLOCK_SIZE >= BLK_SIZE) { \
-    if (sdata[tid+BLK_SIZE/2] > sdata[tid]) { \
+    if (sdata[tid+BLK_SIZE/2] < sdata[tid]) { \
         sdata[tid] = sdata[tid+BLK_SIZE/2]; \
     } \
     __syncwarp(); \
@@ -51,14 +51,14 @@ __global__ void d_min_reduce(const T* d_nums, T* d_res, int N) {
     unsigned int i = blockIdx.x * 2 * BLOCK_SIZE + tid;
     unsigned int gridSize = BLOCK_SIZE * 2 * gridDim.x;
 
-    sdata[tid] = 0;
+    sdata[tid] = -1;
 
     // This rolls all would-be blocks into a single block
     while (i < N) {
-        if (d_nums[i] > d_nums[i + BLOCK_SIZE] && d_nums[i] > sdata[tid]) {
+        if (d_nums[i] < d_nums[i + BLOCK_SIZE] && d_nums[i] < sdata[tid]) {
             sdata[tid] = d_nums[i];
         }
-        else if (d_nums[i + BLOCK_SIZE] > sdata[tid]) {
+        else if (d_nums[i + BLOCK_SIZE] < sdata[tid]) {
             sdata[tid] = d_nums[i + BLOCK_SIZE];
         }
         i += gridSize;
@@ -91,6 +91,7 @@ T min_reduce(const T* nums, int N) {
     
     cudaMalloc(&d_nums, num_blocks * sizeof(T) * 2 * BLOCK_SIZE);
     cudaMalloc(&d_res, num_blocks * sizeof(T));
+    cudaMemset(d_nums, -1, num_blocks * sizeof(T) * 2 * BLOCK_SIZE);
     cudaMemcpy(d_nums, nums, sizeof(T) * N, cudaMemcpyHostToDevice);
 
     // TODO: recursive version, for better GPU utilization
@@ -147,11 +148,13 @@ int main(int argc, char* argv[]) {
     printf("N: %d\n", N);
 
     uint64_t* nums = gen_ints<uint64_t>(N);
+    for (int i = 0; i < N; i++)
+        printf("%d: %llu\n", i, nums[i]);
 
     uint64_t min = nums[0];
     uint64_t min_ind = 0;
     for (int i = 1; i < N; i++) {
-        if (nums[i] > min) {
+        if (nums[i] < min) {
             min = nums[i];
             min_ind = i;
         }
