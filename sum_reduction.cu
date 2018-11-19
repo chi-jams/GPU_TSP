@@ -7,7 +7,8 @@
 #define blocks_needed(N) ((N / (2 * BLOCK_SIZE)) + (N % (2 * BLOCK_SIZE) == 0 ? 0 : 1))
 
 // Oh yeah, we're introducing macros now
-#define sum_reduce_it(BLK_SIZE, sync_mtd) if (BLOCK_SIZE >= BLK_SIZE) {if(tid < BLK_SIZE/2) sdata[tid] += sdata[tid+BLK_SIZE/2];sync_mtd;}
+#define sum_reduce_it(BLK_SIZE) if (BLOCK_SIZE >= BLK_SIZE) {if(tid < BLK_SIZE/2) sdata[tid] += sdata[tid+BLK_SIZE/2];__syncthreads();}
+#define sum_reduce_warp(BLK_SIZE) if (BLOCK_SIZE >= BLK_SIZE) {sdata[tid] += sdata[tid+BLK_SIZE/2];__syncwarp();}
 template <typename T>
 __global__ void d_sum_reduce(const T* d_nums, T* d_res, int N) {
     __shared__ T sdata[2 * BLOCK_SIZE];
@@ -25,16 +26,16 @@ __global__ void d_sum_reduce(const T* d_nums, T* d_res, int N) {
     }
     __syncthreads();
 
-    sum_reduce_it(512, __syncthreads());
-    sum_reduce_it(256, __syncthreads());
-    sum_reduce_it(128, __syncthreads());
+    sum_reduce_it(512);
+    sum_reduce_it(256);
+    sum_reduce_it(128);
     if (tid < 32) {
-        sum_reduce_it(64, __syncwarp());
-        sum_reduce_it(32, __syncwarp());
-        sum_reduce_it(16, __syncwarp());
-        sum_reduce_it(8, __syncwarp());
-        sum_reduce_it(4, __syncwarp());
-        sum_reduce_it(2, __syncwarp());
+        sum_reduce_warp(64);
+        sum_reduce_warp(32);
+        sum_reduce_warp(16);
+        sum_reduce_warp(8);
+        sum_reduce_warp(4);
+        sum_reduce_warp(2);
     }
 
     if (tid == 0)
@@ -51,7 +52,8 @@ T sum_reduce(const T* nums, int N) {
     cudaMalloc(&d_res, num_blocks * sizeof(T));
     cudaMemcpy(d_nums, nums, sizeof(T) * N, cudaMemcpyHostToDevice);
 
-    // recursive version
+    // TODO: recursive version, for better GPU utilization
+    //d_sum_reduce<T><<<blocks_needed, BLOCK_SIZE>>>(d_nums, d_res, N);
     d_sum_reduce<T><<<1, BLOCK_SIZE>>>(d_nums, d_res, N);
 
     T res; 
