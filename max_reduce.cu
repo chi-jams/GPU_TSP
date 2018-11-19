@@ -29,14 +29,14 @@ T* d_gen_index_arr(int N) {
     return d_nums;
 }
 
-#define min_reduce_it(BLK_SIZE) if (BLOCK_SIZE >= BLK_SIZE) { \
+#define max_reduce_it(BLK_SIZE) if (BLOCK_SIZE >= BLK_SIZE) { \
     if (tid < BLK_SIZE / 2 && sdata[tid+BLK_SIZE/2] > sdata[tid]) { \
         sdata[tid] = sdata[tid+BLK_SIZE/2]; \
     } \
     __syncthreads(); \
 }
 
-#define min_reduce_warp(BLK_SIZE) if (BLOCK_SIZE >= BLK_SIZE) { \
+#define max_reduce_warp(BLK_SIZE) if (BLOCK_SIZE >= BLK_SIZE) { \
     if (sdata[tid+BLK_SIZE/2] > sdata[tid]) { \
         sdata[tid] = sdata[tid+BLK_SIZE/2]; \
     } \
@@ -44,7 +44,7 @@ T* d_gen_index_arr(int N) {
 }
 
 template <typename T>
-__global__ void d_min_reduce(const T* d_nums, T* d_res, int N) {
+__global__ void d_max_reduce(const T* d_nums, T* d_res, int N) {
     __shared__ T sdata[2 * BLOCK_SIZE];
 
     unsigned int tid = threadIdx.x;
@@ -65,16 +65,16 @@ __global__ void d_min_reduce(const T* d_nums, T* d_res, int N) {
     }
     __syncthreads();
 
-    min_reduce_it(512);
-    min_reduce_it(256);
-    min_reduce_it(128);
+    max_reduce_it(512);
+    max_reduce_it(256);
+    max_reduce_it(128);
     if (tid < 32) {
-        min_reduce_warp(64);
-        min_reduce_warp(32);
-        min_reduce_warp(16);
-        min_reduce_warp(8);
-        min_reduce_warp(4);
-        min_reduce_warp(2);
+        max_reduce_warp(64);
+        max_reduce_warp(32);
+        max_reduce_warp(16);
+        max_reduce_warp(8);
+        max_reduce_warp(4);
+        max_reduce_warp(2);
     }
 
     if (tid == 0) {
@@ -82,9 +82,9 @@ __global__ void d_min_reduce(const T* d_nums, T* d_res, int N) {
     }
 }
 
-// TODO: Finish converting this to min_reduce
+// TODO: Finish converting this to max_reduce
 template <typename T>
-T min_reduce(const T* nums, int N) {
+T max_reduce(const T* nums, int N) {
     unsigned int num_blocks = blocks_needed(N);
     T* d_nums;
     T* d_res;
@@ -95,7 +95,7 @@ T min_reduce(const T* nums, int N) {
 
     // TODO: recursive version, for better GPU utilization
     //d_sum_reduce<T><<<blocks_needed, BLOCK_SIZE>>>(d_nums, d_res, N);
-    d_min_reduce<T><<<1, BLOCK_SIZE>>>(d_nums, d_res, N);
+    d_max_reduce<T><<<1, BLOCK_SIZE>>>(d_nums, d_res, N);
 
     T res; 
     cudaMemcpy(&res, d_res, sizeof(T), cudaMemcpyDeviceToHost);
@@ -112,7 +112,7 @@ T min_reduce(const T* nums, int N) {
 template <typename T>
 T rand_range(T min, T max) {
     double u = rand() / (double)RAND_MAX;
-    return (max - min + 1) * u + min;
+    return (max - min+ 1) * u + min;
 }
 
 template <typename T>
@@ -120,7 +120,7 @@ T* gen_ints(int N) {
     T* nums = (T*) malloc(sizeof(T) * N);
     srand(time(NULL));
     for (int i = 0; i < N; i++) {
-        nums[i] = rand_range<T>(0, 1000);
+        nums[i] = rand_range<T>(0, 100000);
     }
 
     return nums;
@@ -148,18 +148,18 @@ int main(int argc, char* argv[]) {
 
     uint64_t* nums = gen_ints<uint64_t>(N);
 
-    uint64_t min = nums[0];
-    uint64_t min_ind = 0;
+    uint64_t max = nums[0];
+    uint64_t max_ind = 0;
     for (int i = 1; i < N; i++) {
-        if (nums[i] > min) {
-            min = nums[i];
-            min_ind = i;
+        if (nums[i] > max) {
+            max = nums[i];
+            max_ind = i;
         }
     }
-    printf("Serial min is %llu at %llu\n", min, min_ind);
+    printf("Serial max is %llu at %llu\n", max, max_ind);
 
-    uint64_t par_min = min_reduce<uint64_t>(nums, N);
-    printf("Parallel min: %llu\n", par_min);
+    uint64_t par_max = max_reduce<uint64_t>(nums, N);
+    printf("Parallel max: %llu\n", par_max);
     
     free(nums);
     return 0;

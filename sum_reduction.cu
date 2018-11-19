@@ -3,12 +3,20 @@
 #include <stdlib.h>
 #include <limits.h>
 
+#define uint64_t unsigned long long
 #define BLOCK_SIZE 32 
 #define blocks_needed(N) ((N / (2 * BLOCK_SIZE)) + (N % (2 * BLOCK_SIZE) == 0 ? 0 : 1))
 
 // Oh yeah, we're introducing macros now
-#define sum_reduce_it(BLK_SIZE) if (BLOCK_SIZE >= BLK_SIZE) {if(tid < BLK_SIZE/2) sdata[tid] += sdata[tid+BLK_SIZE/2];__syncthreads();}
-#define sum_reduce_warp(BLK_SIZE) if (BLOCK_SIZE >= BLK_SIZE) {sdata[tid] += sdata[tid+BLK_SIZE/2];__syncwarp();}
+#define sum_reduce_it(BLK_SIZE) if (BLOCK_SIZE >= BLK_SIZE) { \
+    if(tid < BLK_SIZE/2) \
+        sdata[tid] += sdata[tid+BLK_SIZE/2];__syncthreads(); \
+}
+
+#define sum_reduce_warp(BLK_SIZE) if (BLOCK_SIZE >= BLK_SIZE) { \
+    sdata[tid] += sdata[tid+BLK_SIZE/2];__syncwarp(); \
+}
+
 template <typename T>
 __global__ void d_sum_reduce(const T* d_nums, T* d_res, int N) {
     __shared__ T sdata[2 * BLOCK_SIZE];
@@ -105,16 +113,16 @@ int main(int argc, char* argv[]) {
 
     printf("N: %d\n", N);
 
-    unsigned long long* nums = gen_ints<unsigned long long>(N);
+    uint64_t* nums = gen_ints<uint64_t>(N);
 
-    unsigned long long* ind = (unsigned long long*) malloc(sizeof(unsigned long long) * N);
+    uint64_t* ind = (uint64_t*) malloc(sizeof(uint64_t) * N);
     
-    unsigned long long sum = 0;
+    uint64_t sum = 0;
     for (int i = 0; i < N; i++)
         sum += nums[i];
     printf("Serial Sum: %llu\n", sum);
 
-    unsigned long long par_sum = sum_reduce<unsigned long long>(nums, N);
+    uint64_t par_sum = sum_reduce<uint64_t>(nums, N);
     printf("Parallel Sum: %llu\n", par_sum);
 
     free(nums);
