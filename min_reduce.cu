@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <limits.h>
+#include <float.h>
 
 #define uint64_t unsigned long long
 #define BLOCK_SIZE 32 
@@ -51,7 +52,7 @@ __global__ void d_min_reduce(const T* d_nums, T* d_res, int N) {
     unsigned int i = blockIdx.x * 2 * BLOCK_SIZE + tid;
     unsigned int gridSize = BLOCK_SIZE * 2 * gridDim.x;
 
-    sdata[tid] = -1;
+    sdata[tid] = DBL_MAX;
 
     // This rolls all would-be blocks into a single block
     while (i < N) {
@@ -126,6 +127,17 @@ T* gen_ints(int N) {
 
     return nums;
 }
+
+double* gen_doubles(int N, double min, double max) {
+    double* nums = (double*) malloc(sizeof(double) * N);
+    srand(time(NULL));
+    for (int i = 0; i < N; i++) {
+        double u = rand() / (double)RAND_MAX;
+        nums[i] = (max - min) * u + min;
+    }
+
+    return nums;
+}
 /* END: Stuff that should die */
 
 int main(int argc, char* argv[]) {
@@ -147,22 +159,24 @@ int main(int argc, char* argv[]) {
 
     printf("N: %d\n", N);
 
-    uint64_t* nums = gen_ints<uint64_t>(N);
+    double* nums = gen_doubles(N, 0, 1000);
+    /*
     for (int i = 0; i < N; i++)
-        printf("%d: %llu\n", i, nums[i]);
+        printf("%d: %lf\n", i, nums[i]);
+    */
 
-    uint64_t min = nums[0];
-    uint64_t min_ind = 0;
+    double min = nums[0];
+    int min_ind = 0;
     for (int i = 1; i < N; i++) {
         if (nums[i] < min) {
             min = nums[i];
             min_ind = i;
         }
     }
-    printf("Serial min is %llu at %llu\n", min, min_ind);
+    printf("Serial min is %lf at %llu\n", min, min_ind);
 
-    uint64_t par_min = min_reduce<uint64_t>(nums, N);
-    printf("Parallel min: %llu\n", par_min);
+    double par_min = min_reduce<double>(nums, N);
+    printf("Parallel min: %lf\n", par_min);
     
     free(nums);
     return 0;

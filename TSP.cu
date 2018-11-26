@@ -2,13 +2,13 @@
 #include <stdlib.h>
 #include <time.h>
 #include <limits.h>
+#include <float.h>
 //#include <math.h>
 
 #include <algorithm>
 
-#include "reductions.h"
-
 #define BLOCK_SIZE 32
+#define blocks_needed(N) ((N / (2 * BLOCK_SIZE)) + (N % (2 * BLOCK_SIZE) == 0 ? 0 : 1))
 
 int rand_range(int min, int max);
 int* make_pts(int N);
@@ -24,7 +24,8 @@ __device__ int* d_gen_perm(int n, int perm) {
     int* p = (int*) malloc(sizeof(int) * n);
     int* e = (int*) malloc(sizeof(int) * n);
 
-    for (i=0;i<n;i++)e[i]=i;
+    for (i=0;i<n;i++)
+        e[i]=i;
     for (i=0;i<n;i++) {
         ind = m % (n - i);
         m = m / (n - i);
@@ -52,7 +53,8 @@ __device__ double d_get_dist(const int* pts, int i, int j) {
 }
 
 __global__ void calc_paths(const int* pts, double* dists, int N, int Nf) {
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+    //unsigned int gridSize = BLOCK_SIZE * gridDim.x;
 
     if (i < Nf) {
         int* perm = d_gen_perm(N, i);        
@@ -63,7 +65,86 @@ __global__ void calc_paths(const int* pts, double* dists, int N, int Nf) {
         dists[i] = dist;
 
         free(perm);
+        //i += gridSize;
     }
+}
+
+#define min_reduce_it(BLK_SIZE) if (BLOCK_SIZE >= BLK_SIZE) { \
+    if (tid < BLK_SIZE / 2 && sdata[tid+BLK_SIZE/2] < sdata[tid]) { \
+        sdata[tid] = sdata[tid+BLK_SIZE/2]; \
+    } \
+    __syncthreads(); \
+}
+
+#define min_reduce_warp(BLK_SIZE) if (BLOCK_SIZE >= BLK_SIZE) { \
+    if (sdata[tid+BLK_SIZE/2] < sdata[tid]) { \
+        sdata[tid] = sdata[tid+BLK_SIZE/2]; \
+    } \
+    __syncwarp(); \
+}
+
+template <typename T>
+__global__ void d_min_reduce(const T* d_nums, T* d_res, int N) {
+    __shared__ T sdata[2 * BLOCK_SIZE];
+
+    unsigned int tid = threadIdx.x;
+    unsigned int i = blockIdx.x * 2 * BLOCK_SIZE + tid;
+    unsigned int gridSize = BLOCK_SIZE * 2 * gridDim.x;
+
+    sdata[tid] = 20000;
+
+    // This rolls all would-be blocks into a single block
+    while (i < N) {
+        if (d_nums[i] < d_nums[i + BLOCK_SIZE] && d_nums[i] < sdata[tid]) {
+            sdata[tid] = d_nums[i];
+        }
+        else if (d_nums[i + BLOCK_SIZE] < sdata[tid]) {
+            sdata[tid] = d_nums[i + BLOCK_SIZE];
+        }
+        i += gridSize;
+    }
+    __syncthreads();
+
+    min_reduce_it(512);
+    min_reduce_it(256);
+    min_reduce_it(128);
+    if (tid < 32) {
+        min_reduce_warp(64);
+        min_reduce_warp(32);
+        min_reduce_warp(16);
+        min_reduce_warp(8);
+        min_reduce_warp(4);
+        min_reduce_warp(2);
+    }
+
+    if (tid == 0) {
+        d_res[blockIdx.x] = sdata[0];
+    }
+}
+
+// TODO: Finish converting this to min_reduce
+template <typename T>
+T min_reduce(const T* nums, int N) {
+    unsigned int num_blocks = blocks_needed(N);
+    T* d_nums;
+    T* d_res;
+    
+    cudaMalloc(&d_nums, num_blocks * sizeof(T) * 2 * BLOCK_SIZE);
+    cudaMalloc(&d_res, num_blocks * sizeof(T));
+    cudaMemset(d_nums, 127, num_blocks * sizeof(T) * 2 * BLOCK_SIZE);
+    cudaMemcpy(d_nums, nums, sizeof(T) * N, cudaMemcpyHostToDevice);
+
+    // TODO: recursive version, for better GPU utilization
+    //d_sum_reduce<T><<<blocks_needed, BLOCK_SIZE>>>(d_nums, d_res, N);
+    d_min_reduce<T><<<1, BLOCK_SIZE>>>(d_nums, d_res, N);
+
+    T res; 
+    cudaMemcpy(&res, d_res, sizeof(T), cudaMemcpyDeviceToHost);
+    
+    cudaFree(d_nums);
+    cudaFree(d_res);
+
+    return res;
 }
 
 int main(int argc, char* argv[]) {
@@ -109,9 +190,12 @@ int main(int argc, char* argv[]) {
 
     /* Parallel TSP calculation */
     double p_min_dist;
-    parallel_tsp(pts, p_min_dist, min_perm, N, Nf);
+    int p_min_perm;
+    parallel_tsp(pts, p_min_dist, p_min_perm, N, Nf);
     printf("Parallel min distance: %f\n", p_min_dist);
     /* End Parallel TSP calculation */
+
+
     free(pts);
     return 0;
 }
@@ -200,12 +284,19 @@ void parallel_tsp(const int* pts, double& min_dist, int& min_perm, int N, int Nf
     printf("Malloc'd\n");
     cudaMemcpy(d_pts, pts, 2 * N * sizeof(int), cudaMemcpyHostToDevice);
 
-    printf("Welp\n");
+    for (int i = 0; i < 2 * N; i += 2)
+        printf("Real: %d %d\n", pts[i], pts[i + 1]);
+
+    printf("Copied points\n");
     // TODO: Make block nums/block size actually make sense
-    calc_paths<<<Nf, 1>>>(d_pts, d_dists, N, Nf);
+    calc_paths<<<1, BLOCK_SIZE>>>(d_pts, d_dists, N, Nf);
+
+    double* why;
+    why = (double*) malloc(sizeof(double) * Nf);
+    cudaMemcpy(why, d_dists, sizeof(double) * Nf, cudaMemcpyDeviceToHost);
 
     printf("Made paths...\n");
-    //min_dist = max_reduce(d_dists, N);
+    min_dist = min_reduce<double>(why, Nf);
     min_perm = 0; // Haven't gotten the actual permutation yet
     printf("Did reduction...\n");
 
