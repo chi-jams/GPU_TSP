@@ -91,7 +91,7 @@ __global__ void d_min_reduce(const T* d_nums, T* d_res, int N) {
     unsigned int i = blockIdx.x * 2 * BLOCK_SIZE + tid;
     unsigned int gridSize = BLOCK_SIZE * 2 * gridDim.x;
 
-    sdata[tid] = 20000;
+    sdata[tid] = DBL_MAX;
 
     // This rolls all would-be blocks into a single block
     while (i < N) {

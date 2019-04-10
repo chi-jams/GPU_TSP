@@ -61,8 +61,7 @@ T sum_reduce(const T* nums, int N) {
     cudaMemcpy(d_nums, nums, sizeof(T) * N, cudaMemcpyHostToDevice);
 
     // TODO: recursive version, for better GPU utilization
-    //d_sum_reduce<T><<<blocks_needed, BLOCK_SIZE>>>(d_nums, d_res, N);
-    d_sum_reduce<T><<<1, BLOCK_SIZE>>>(d_nums, d_res, N);
+    d_sum_reduce<T><<<blocks_needed, BLOCK_SIZE>>>(d_nums, d_res, N);
 
     T res; 
     cudaMemcpy(&res, d_res, sizeof(T), cudaMemcpyDeviceToHost);

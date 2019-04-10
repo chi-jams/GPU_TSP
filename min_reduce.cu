@@ -92,7 +92,7 @@ T min_reduce(const T* nums, int N) {
     
     cudaMalloc(&d_nums, num_blocks * sizeof(T) * 2 * BLOCK_SIZE);
     cudaMalloc(&d_res, num_blocks * sizeof(T));
-    cudaMemset(d_nums, -1, num_blocks * sizeof(T) * 2 * BLOCK_SIZE);
+    cudaMemset(d_nums, 127, num_blocks * sizeof(T) * 2 * BLOCK_SIZE);
     cudaMemcpy(d_nums, nums, sizeof(T) * N, cudaMemcpyHostToDevice);
 
     // TODO: recursive version, for better GPU utilization
