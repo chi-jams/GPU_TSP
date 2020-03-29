@@ -63,6 +63,7 @@ __global__ void calc_paths(const int* pts, double* dists, int N, int Nf) {
         for (int j = 0; j < N; j++)
             dist += d_get_dist(pts, perm[j], perm[(j+1) % N]);
         dists[i] = dist;
+        //printf("dist %d: %f\n", i, dist);
 
         free(perm);
         //i += gridSize;
@@ -303,4 +304,3 @@ void parallel_tsp(const int* pts, double& min_dist, int& min_perm, int N, int Nf
     cudaFree(d_pts);
     cudaFree(d_dists);
 }
-
